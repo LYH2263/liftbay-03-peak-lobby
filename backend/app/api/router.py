@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.models import Building, CallTicket, DispatchLog, ElevatorCar
 from app.schemas.schemas import (
     BuildingOut,
+    BuildingUpdate,
     CallCreate,
     CallOut,
     CarOut,
@@ -13,7 +14,13 @@ from app.schemas.schemas import (
     DispatchRequest,
     LogOut,
 )
-from app.services.dispatch_engine import CallRequest, CarState, congestion_by_floor, pick_car
+from app.services.dispatch_engine import (
+    CallRequest,
+    CarState,
+    PeakPolicy,
+    congestion_by_floor,
+    pick_car,
+)
 
 api_router = APIRouter()
 
@@ -26,6 +33,17 @@ def health():
 @api_router.get("/buildings", response_model=list[BuildingOut])
 def buildings(db: Session = Depends(get_db)):
     return db.scalars(select(Building).order_by(Building.id)).all()
+
+
+@api_router.patch("/buildings/{building_id}", response_model=BuildingOut)
+def update_building(building_id: int, body: BuildingUpdate, db: Session = Depends(get_db)):
+    b = db.get(Building, building_id)
+    if not b:
+        raise HTTPException(404, "楼栋不存在")
+    b.peak_mode = body.peak_mode
+    db.commit()
+    db.refresh(b)
+    return b
 
 
 @api_router.get("/cars", response_model=list[CarOut])
@@ -72,10 +90,18 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
     cars = [
         CarState(c.id, c.floor, c.direction, c.load, c.capacity) for c in car_rows
     ]
+    building = db.get(Building, ticket.building_id)
+    policy = PeakPolicy(
+        enabled=bool(building and building.peak_mode),
+        lobby_floor=building.lobby_floor if building else 1,
+    )
     call = CallRequest(ticket.id, ticket.floor, ticket.direction, ticket.passengers)
-    best = pick_car(cars, call)
+    best = pick_car(cars, call, policy)
     if best is None:
-        db.add(DispatchLog(call_id=ticket.id, car_id=None, detail="全部轿厢满员，拒绝派工"))
+        detail = "全部轿厢满员，拒绝派工"
+        if policy.enabled:
+            detail += "（早高峰开启：满员不超载，拒绝）"
+        db.add(DispatchLog(call_id=ticket.id, car_id=None, detail=detail))
         ticket.status = "rejected"
         db.commit()
         db.refresh(ticket)
@@ -88,11 +114,19 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
     car.load += ticket.passengers
     car.floor = ticket.floor
     car.direction = ticket.direction
+    if policy.enabled:
+        note = (
+            "早高峰开启：高峰规则改写胜者，优先大厅驻点轿厢"
+            if best.peak_override
+            else "早高峰开启：未改写胜者"
+        )
+    else:
+        note = "同向/距离综合"
     db.add(
         DispatchLog(
             call_id=ticket.id,
             car_id=car.id,
-            detail=f"派予 {car.label}，评分 {best.score:.1f}（同向/距离综合）",
+            detail=f"派予 {car.label}，评分 {best.score:.1f}（{note}）",
         )
     )
     db.commit()

@@ -238,6 +238,29 @@ button {
 .mono { font-family: "IBM Plex Mono", monospace; }
 .err { color: #ff8e8e; } .ok { color: #7ddea0; }
 
+/* 早高峰开关与回放徽标 */
+.peak-toggle {
+  background: transparent; color: var(--shaft-muted);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: .3rem .9rem; font-weight: 700; cursor: pointer;
+}
+.peak-toggle--on {
+  background: var(--shaft-amber); color: #201200; border-color: var(--shaft-amber);
+}
+.peak-hint { color: var(--shaft-muted); font-size: .85rem; margin-top: .8rem; }
+.badge-peak {
+  display: inline-block; padding: .1rem .55rem; border-radius: 999px;
+  font-size: .78rem; font-weight: 700;
+  background: rgba(240, 162, 2, .12); color: var(--shaft-amber);
+  border: 1px solid rgba(240, 162, 2, .45);
+}
+.badge-peak--rewrite {
+  background: var(--shaft-amber); color: #201200; border-color: var(--shaft-amber);
+}
+.badge-peak--off {
+  background: transparent; color: var(--shaft-muted); border-color: var(--line);
+}
+
 /* Keep page-level shaft helpers for /cars if visited */
 .shaft-wrap { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: .5rem; }
 .shaft {

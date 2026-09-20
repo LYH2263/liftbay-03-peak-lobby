@@ -6,7 +6,13 @@ class BuildingOut(BaseModel):
     id: int
     name: str
     floors: int
+    lobby_floor: int
+    peak_mode: bool
     model_config = {"from_attributes": True}
+
+
+class BuildingUpdate(BaseModel):
+    peak_mode: bool
 
 
 class CarOut(BaseModel):
