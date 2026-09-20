@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -11,6 +11,11 @@ class Building(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(80), unique=True)
     floors: Mapped[int] = mapped_column(Integer)
+    # 大厅层由种子指定；早高峰仅对该层的上行呼梯生效。
+    lobby_floor: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    peak_mode: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     cars: Mapped[list["ElevatorCar"]] = relationship(back_populates="building")
 
 

@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.models import Building, CallTicket, DispatchLog, ElevatorCar
 from app.schemas.schemas import (
     BuildingOut,
+    BuildingUpdate,
     CallCreate,
     CallOut,
     CarOut,
@@ -13,7 +14,13 @@ from app.schemas.schemas import (
     DispatchRequest,
     LogOut,
 )
-from app.services.dispatch_engine import CallRequest, CarState, congestion_by_floor, pick_car
+from app.services.dispatch_engine import (
+    CallRequest,
+    CarState,
+    congestion_by_floor,
+    pick_car,
+    score_car,
+)
 
 api_router = APIRouter()
 
@@ -26,6 +33,18 @@ def health():
 @api_router.get("/buildings", response_model=list[BuildingOut])
 def buildings(db: Session = Depends(get_db)):
     return db.scalars(select(Building).order_by(Building.id)).all()
+
+
+@api_router.patch("/buildings/{building_id}", response_model=BuildingOut)
+def update_building(building_id: int, body: BuildingUpdate, db: Session = Depends(get_db)):
+    b = db.get(Building, building_id)
+    if not b:
+        raise HTTPException(404, "楼栋不存在")
+    if body.peak_mode is not None:
+        b.peak_mode = body.peak_mode
+    db.commit()
+    db.refresh(b)
+    return b
 
 
 @api_router.get("/cars", response_model=list[CarOut])
@@ -72,29 +91,48 @@ def dispatch(body: DispatchRequest, db: Session = Depends(get_db)):
     cars = [
         CarState(c.id, c.floor, c.direction, c.load, c.capacity) for c in car_rows
     ]
+    building = db.get(Building, ticket.building_id)
+    assert building
     call = CallRequest(ticket.id, ticket.floor, ticket.direction, ticket.passengers)
-    best = pick_car(cars, call)
-    if best is None:
-        db.add(DispatchLog(call_id=ticket.id, car_id=None, detail="全部轿厢满员，拒绝派工"))
+    decision = pick_car(
+        cars,
+        call,
+        peak_mode=building.peak_mode,
+        lobby_floor=building.lobby_floor,
+    )
+    if decision is None:
+        detail = "全部轿厢满员，拒绝派工"
+        if building.peak_mode:
+            detail += "（早高峰未强行超载）"
+        db.add(DispatchLog(call_id=ticket.id, car_id=None, detail=detail))
         ticket.status = "rejected"
         db.commit()
         db.refresh(ticket)
         raise HTTPException(409, "无可用轿厢（满员）")
+    best = decision.winner
     car = db.get(ElevatorCar, best.car_id)
     assert car
+    # 票面记录普通（现网）评分；高峰加成只体现在胜者选择与回放说明里。
+    chosen_state = next(c for c in cars if c.car_id == car.id)
+    normal = score_car(chosen_state, call, peak_mode=False)
     ticket.status = "assigned"
     ticket.assigned_car_id = car.id
-    ticket.score = f"{best.score:.1f}"
+    ticket.score = f"{normal.score:.1f}"
     car.load += ticket.passengers
     car.floor = ticket.floor
     car.direction = ticket.direction
-    db.add(
-        DispatchLog(
-            call_id=ticket.id,
-            car_id=car.id,
-            detail=f"派予 {car.label}，评分 {best.score:.1f}（同向/距离综合）",
+    if decision.peak_rewrote:
+        normal_car = db.get(ElevatorCar, decision.normal_winner.car_id)
+        assert normal_car
+        detail = (
+            f"早高峰改写胜者：普通分 {normal_car.label} {decision.normal_winner.score:.1f} 更高，"
+            f"仍优先派予大厅 {car.label}（普通分 {normal.score:.1f}），大厅上行优先且未超载"
         )
-    )
+    elif best.peak_priority:
+        detail = f"早高峰派予大厅 {car.label}，普通分 {normal.score:.1f}"
+    else:
+        detail = f"派予 {car.label}，评分 {normal.score:.1f}（同向/距离综合）"
+    db.add(DispatchLog(call_id=ticket.id, car_id=car.id, detail=detail))
     db.commit()
     db.refresh(ticket)
     return ticket

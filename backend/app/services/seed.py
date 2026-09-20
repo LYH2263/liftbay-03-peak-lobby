@@ -7,7 +7,7 @@ from app.models.models import Building, CallTicket, DispatchLog, ElevatorCar
 def seed_if_empty(db: Session) -> None:
     if db.scalar(select(Building.id).limit(1)):
         return
-    b = Building(name="研发中心 A 座", floors=18)
+    b = Building(name="研发中心 A 座", floors=18, lobby_floor=1, peak_mode=False)
     db.add(b)
     db.flush()
     cars = [
@@ -18,12 +18,14 @@ def seed_if_empty(db: Session) -> None:
     ]
     db.add_all(cars)
     db.flush()
+    # 大厅(1层)上行呼梯：A3 为停在大厅的 idle 空车，A1 为上层同向上行近车。
+    c0 = CallTicket(building_id=b.id, floor=1, direction="up", passengers=1, status="waiting")
     c1 = CallTicket(building_id=b.id, floor=5, direction="up", passengers=2, status="waiting")
     c2 = CallTicket(building_id=b.id, floor=14, direction="down", passengers=1, status="waiting")
     c3 = CallTicket(
         building_id=b.id, floor=9, direction="up", passengers=3, status="assigned", assigned_car_id=cars[0].id, score="72.0"
     )
-    db.add_all([c1, c2, c3])
+    db.add_all([c0, c1, c2, c3])
     db.flush()
     db.add(DispatchLog(call_id=c3.id, car_id=cars[0].id, detail="同向优先派予 A1，评分 72.0"))
     db.commit()
